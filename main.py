@@ -59,7 +59,7 @@ class BlenderRenderApp:
 
         self.scene_frame_range_var = tk.BooleanVar(value = False)
         self.frame_toggle = ToggleButton(frame_range_frame, on_toggle=self.update_user_settings)
-        self.frame_toggle.button.grid(row=0, column=4, padx=5)
+        # self.frame_toggle.button.grid(row=0, column=4, padx=5)
         self.frame_toggle.set_state("Default")
 
         # Define the IntVar before using it
@@ -304,19 +304,27 @@ class BlenderRenderApp:
             self.output_label.config(state="normal")  # Enable output folder selection
             self.select_output_button.config(state="normal")  # Enable button
             self.file_name_label.config(state="normal") # Enable Label
-            self.filename_toggle.button.config(state="normal")  # Enable toggle button
-            self.output_toggle.button.config(state="normal")  # Enable toggle button
+            # self.filename_toggle.button.config(state="normal")  # Enable toggle button
+            # self.output_toggle.button.config(state="normal")  # Enable toggle button
             self.output_path_label.config(state="normal")
+            self.filename_toggle.canvas.bind("<Button-1>", self.filename_toggle.toggle)
+            self.output_toggle.canvas.bind("<Button-1>", self.output_toggle.toggle)
 
+            self.filename_toggle.canvas.itemconfig(self.filename_toggle.circle, fill="lightgray", outline="black")  # Restore normal color
+            self.output_toggle.canvas.itemconfig(self.output_toggle.circle, fill="lightgray", outline="black")
         else:
             self.filename_entry.config(state="disabled")  # Disable filename input
             self.output_label.config(state="disabled")  # Disable output folder selection
             self.select_output_button.config(state="disabled")  # Disable button
             self.file_name_label.config(state="disabled") # Enable Label
-            self.filename_toggle.button.config(state="disabled")  # Enable toggle button
-            self.output_toggle.button.config(state="disabled")  # Enable toggle button
+            # self.filename_toggle.button.config(state="disabled")  # Enable toggle button
+            # self.output_toggle.button.config(state="disabled")  # Enable toggle button
             self.output_path_label.config(state="disabled")
+            self.filename_toggle.canvas.unbind("<Button-1>")  # Disable filename toggle
+            self.output_toggle.canvas.unbind("<Button-1>")  # Disable output toggle
 
+            self.filename_toggle.canvas.itemconfig(self.filename_toggle.circle, fill="", outline="")  # Gray out button
+            self.output_toggle.canvas.itemconfig(self.output_toggle.circle, fill="", outline="")  # Gray out button
 
     def update_user_settings(self):
         """Saves the user's modified settings to the JSON file."""
@@ -651,32 +659,43 @@ class BlenderRenderApp:
 class ToggleButton:
     def __init__(self, parent, on_toggle=None):
         """
-        A reusable toggle button for switching between Scene, User, and Default settings.
-        For now, it only prints a message when toggled.
+        A circular toggle button with an emoji in Tkinter.
 
         :param parent: The parent Tkinter frame.
+        :param on_toggle: Function to call when the button is clicked (e.g., saving settings).
         """
         self.states = [
             ("🎬", "Scene"),
             ("👥", "User"),
-            ("⚙️", "Default")
-        ]  # (Emoji, Full Name) # Scene, User, Default
-        self.current_state = 2  # Start at Scene
+            ("🏠️", "Default")
+        ]  # (Emoji, Full Name)
+        self.current_state = 2  # Start at Default (🏠️)
         self.on_toggle = on_toggle  # Callback function
 
-        # Create button (only displays emoji)
-        self.button = tk.Button(parent, text=self.states[self.current_state][0], command=self.toggle)
-        self.button.grid(row=0, column=2, padx=5)
+        # Get parent background color to match
+        parent_bg = parent.cget("background")
 
-    def toggle(self):
-        """Cycles through the 3 states and prints the full name with emoji."""
+        # ✅ Create a circular canvas button
+        self.canvas = tk.Canvas(parent, width=30, height=30, highlightthickness=0, bg=parent_bg, bd=0)
+        self.circle = self.canvas.create_oval(2, 2, 28, 28, fill="lightgray", outline="black")  # Draws the circle
+        self.text = self.canvas.create_text(15, 15, text=self.states[self.current_state][0], font=("Arial", 12))
+
+        # ✅ Make the whole button clickable
+        self.canvas.bind("<Button-1>", self.toggle)
+
+        # ✅ Fix overlapping issue (align properly)
+        self.canvas.grid(row=0, column=4, padx=3, pady=3, sticky="w")
+
+    def toggle(self, event=None):
+        """Cycles through the 3 states and updates the button appearance."""
         self.current_state = (self.current_state + 1) % 3  # 🎬 → 👥 → ⚙️ → 🎬
 
         emoji, name = self.states[self.current_state]  # Extract new emoji + name
-        self.button.config(text=emoji)  # Update button text (emoji only)
+        self.canvas.itemconfig(self.text, text=emoji)  # Update displayed emoji
         print(f"Loading {emoji} {name} settings")  # Print full message
+
         if self.on_toggle:
-            self.on_toggle()  # Trigger save when toggled
+            self.on_toggle()  # ✅ Trigger save when toggled
 
     def set_state(self, state_name):
         """
@@ -688,7 +707,7 @@ class ToggleButton:
         if state_name in state_map:
             self.current_state = state_map[state_name]
             emoji, _ = self.states[self.current_state]
-            self.button.config(text=emoji)  # Update button text
+            self.canvas.itemconfig(self.text, text=emoji)  # Update button text
             print(f"Button set to {emoji} {state_name} externally")
         else:
             print(f"⚠️ Invalid state: {state_name}. Must be 'Scene', 'User', or 'Default'.")
