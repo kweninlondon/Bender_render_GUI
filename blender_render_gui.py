@@ -4,12 +4,12 @@ import tkinter as tk
 from tkinter import filedialog, IntVar, StringVar, messagebox, ttk
 from tkinterdnd2 import DND_FILES, TkinterDnD
 import threading
-import re
 import time
 import psutil
 
 class BlenderRenderApp:
     def __init__(self, root):
+        self.rendered_frame_count = None
         self.root = root
         self.root.title("Blender Render Launcher")
         self.root.geometry("700x600")
@@ -29,21 +29,6 @@ class BlenderRenderApp:
         self.scene_label = tk.Label(root, textvariable=self.scene_var, font=("Arial", 14, "bold"))
         self.scene_label.pack()
 
-        # Checkbox to override output settings
-        self.override_output = IntVar(value=0)
-        self.override_checkbox = tk.Checkbutton(root, text="Override Output Path & Name",
-                                                variable=self.override_output, font=("Arial", 12, "bold"))
-        self.override_checkbox.pack(pady=5)
-
-        # Render File Name Input
-        self.render_filename = StringVar(value="render_output")
-        file_name_frame = tk.Frame(root)
-        file_name_frame.pack(pady=5)
-
-        tk.Label(file_name_frame, text="Render File Name:").grid(row=0, column=0, padx=5)
-        self.filename_entry = tk.Entry(file_name_frame, textvariable=self.render_filename, width=50, font=("Arial", 12))
-        self.filename_entry.grid(row=0, column=1, padx=5)
-
         # Frame Range Inputs
         self.start_frame_var = IntVar(value=1)
         self.end_frame_var = IntVar(value=250)
@@ -59,18 +44,34 @@ class BlenderRenderApp:
         self.end_frame_entry = tk.Entry(frame_range_frame, textvariable=self.end_frame_var, width=5, font=("Arial", 12, "bold"))
         self.end_frame_entry.grid(row=0, column=3, padx=5)
 
+        # Define the IntVar before using it
+        self.override_output = IntVar(value=0)
+
+        # Checkbox to override output settings
+        self.override_checkbox = tk.Checkbutton(root, text="Override Output Path & Name",
+                                                variable=self.override_output,
+                                                font=("Arial", 12, "bold"),
+                                                command=self.toggle_output_options)
+        self.override_checkbox.pack(pady=5)
+        # Render File Name Input
+        self.render_filename = StringVar(value="render_output")
+        file_name_frame = tk.Frame(root)
+        file_name_frame.pack(pady=5)
+
+        tk.Label(file_name_frame, text="Render File Name:").grid(row=0, column=0, padx=5)
+        self.filename_entry = tk.Entry(file_name_frame, textvariable=self.render_filename, width=50, font=("Arial", 12))
+        self.filename_entry.grid(row=0, column=1, padx=5)
+
         # Output Folder Selection
         self.output_path = StringVar(value=os.path.expanduser("~/Desktop"))
-        tk.Button(root, text="Select Output Folder", command=self.select_output_folder).pack(pady=5)
+
+        # tk.Button(root, text="Select Output Folder", command=self.select_output_folder).pack(pady=5)
+        self.select_output_button = tk.Button(root, text="Select Output Folder", command=self.select_output_folder)
+        self.select_output_button.pack(pady=5)
+
         self.output_label = tk.Label(root, textvariable=self.output_path, fg="black", font=("Arial", 12, "bold"))
         self.output_label.pack()
 
-        # Render Button
-        self.render_button = tk.Button(root, text="Render", command=self.start_render, bg="#4CAF50", fg="black", font=("Arial", 12, "bold"), padx=10, pady=5)
-        self.render_button.pack(pady=10)
-
-        style = ttk.Style()
-        style.configure("Custom.Horizontal.TProgressbar", thickness=60)
         # Overall Progress Bar
         self.overall_progress = ttk.Progressbar(root, style="Custom.Horizontal.TProgressbar", orient="horizontal", length=400, mode="determinate")
         self.overall_progress.pack(pady=5)
@@ -102,8 +103,12 @@ class BlenderRenderApp:
         self.estimated_time_label = tk.Label(root, textvariable=self.estimated_time_var, font=("Arial", 12))
         self.estimated_time_label.pack()
 
+        # Render Button
+        self.render_button = tk.Button(root, text="Render", command=self.start_render, bg="#4CAF50", fg="black", font=("Arial", 12, "bold"), padx=10, pady=5)
+        self.render_button.pack(pady=10)
+
         # Cancel Button
-        self.cancel_button = tk.Button(root, text="Cancel Render", command=self.cancel_render, bg="red", fg="white", font=("Arial", 12, "bold"))
+        self.cancel_button = tk.Button(root, text="Cancel Render", command=self.cancel_render, bg="red", fg="black", font=("Arial", 12, "bold"))
         self.cancel_button.pack(pady=5)
         self.cancel_button.config(state="disabled")
 
@@ -112,35 +117,14 @@ class BlenderRenderApp:
         self.start_time = None
         self.current_frame_start_time = None
         self.frame_times = []
+        self.last_frame_number = None
+
         # self.first_detected_frame = None  # Initialize it to None
         self.rendering_active = False
+
+        self.toggle_output_options()
         print("UI initialized successfully!")
 
-    def get_output_path(self, blend_file):
-        """ Extracts the render output path and file name from a Blender file using the command line """
-        script = """
-    import bpy
-    print(bpy.context.scene.render.filepath)
-        """
-
-        try:
-            output = subprocess.check_output([
-                "/Applications/Blender.app/Contents/MacOS/Blender",
-                "-b", blend_file, "--python-expr", script
-            ], stderr=subprocess.DEVNULL, text=True)
-
-            full_output_path = output.strip().split("\n")[-1]
-
-            # If Blender did not return a path, fallback to blend file directory
-            if not full_output_path or "Blender quit" in full_output_path:
-                return os.path.dirname(blend_file), "render_output"
-
-            output_directory = os.path.dirname(full_output_path)
-            output_filename = os.path.basename(full_output_path)
-
-            return output_directory, output_filename
-        except Exception as e:
-            return os.path.dirname(blend_file), "render_output"  # Fallback on error
 
     def drop_file(self, event):
         file_path = event.data.strip('{}')  # Handle macOS paths
@@ -148,11 +132,6 @@ class BlenderRenderApp:
 
         if file_path.endswith(".blend"):
             self.blend_file_path = file_path
-
-            extracted_output_path, extracted_filename = self.get_output_path(file_path)
-
-            self.output_path.set(extracted_output_path)  # Set output folder path
-            self.render_filename.set(extracted_filename)  # Set output file name
 
             display_path = self.shorten_path(file_path, max_length=50)
             self.file_label.config(text=display_path, fg="green")
@@ -166,6 +145,17 @@ class BlenderRenderApp:
         if len(path) > max_length:
             return f"{path[:15]}...{path[-30:]}"  # Show start and end of path
         return path
+
+    def toggle_output_options(self):
+        """Enable or disable output path and filename entry based on checkbox state."""
+        if self.override_output.get():
+            self.filename_entry.config(state="normal")  # Enable filename input
+            self.output_label.config(state="normal")  # Enable output folder selection
+            self.select_output_button.config(state="normal")  # Enable button
+        else:
+            self.filename_entry.config(state="disabled")  # Disable filename input
+            self.output_label.config(state="disabled")  # Disable output folder selection
+            self.select_output_button.config(state="disabled")  # Disable button
 
     def update_ui(self, file_path):
         """ Updates the UI after a file is dropped """
@@ -184,6 +174,9 @@ class BlenderRenderApp:
         start_frame = self.start_frame_var.get()
         end_frame = self.end_frame_var.get()
         total_frames = end_frame - start_frame + 1
+
+        # Disable the render button and change its text
+        self.render_button.config(state="disabled", text="🚀Rendering...")
 
         # Reset UI elements
         self.frame_progress_var.set(f"Frames Rendered: 0/{total_frames}")
@@ -234,7 +227,7 @@ class BlenderRenderApp:
                     try:
                         frame_number = int(line.split("Fra:")[1].split()[0])  # Extract actual Fra number
 
-                        # If this is not the first time we see FRA and it is a new frame:
+                        # If this is not the first time we see FRA, and it is a new frame:
                         if rendering_frame is not None and rendering_frame != frame_number:
                             now = time.time()
                             frame_time = now - self.current_frame_start_time
@@ -281,8 +274,9 @@ class BlenderRenderApp:
                     self.frame_times.append(frame_time)
                 print(f"✅ Final Frame {rendering_frame} finished in {frame_time:.2f}s")
 
-            # When the render finishes, disable cancel button
+            # When the render finishes, disable cancel button and unable render button
             self.root.after(10, lambda: self.cancel_button.config(state="disabled"))
+            self.root.after(10, lambda: self.render_button.config(state="normal", text="Render"))
 
         # Run the render process in a separate thread to prevent UI freezing
         threading.Thread(target=run_render, daemon=True).start()
@@ -345,6 +339,7 @@ class BlenderRenderApp:
                 if hasattr(self, "frame_progress_var"):
                     self.frame_progress_var.set("Render Canceled")
 
+                self.render_button.config(state="normal", text="Render")
                 messagebox.showinfo("Render Canceled", "Rendering has been stopped.")
 
             except psutil.NoSuchProcess:
