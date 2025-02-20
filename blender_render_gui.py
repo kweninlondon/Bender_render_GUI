@@ -54,7 +54,7 @@ class BlenderRenderApp:
                                                 command=self.toggle_output_options)
         self.override_checkbox.pack(pady=5)
         # Render File Name Input
-        self.render_filename = StringVar(value="render_output")
+        self.render_filename = StringVar(value="render_output_####")
         file_name_frame = tk.Frame(root)
         file_name_frame.pack(pady=5)
 
@@ -133,17 +133,24 @@ class BlenderRenderApp:
         if file_path.endswith(".blend"):
             self.blend_file_path = file_path
 
-            display_path = self.shorten_path(file_path, max_length=50)
-            self.file_label.config(text=display_path, fg="green")
+            blend_directory = os.path.dirname(file_path)
+            self.output_path.set(blend_directory)
+
+            display_path = self.shorten_path(blend_directory, max_length=50)
+            self.file_label.config(text= display_path, fg="green")
 
             self.root.after(10, lambda: self.update_ui(file_path))
         else:
             messagebox.showerror("Error", "Please drop a valid .blend file")
 
     def shorten_path(self, path, max_length=50):
-        """ Shortens a long file path for UI display. """
+        """Shortens a long file path for UI display."""
         if len(path) > max_length:
-            return f"{path[:15]}...{path[-30:]}"  # Show start and end of path
+            start_chars = 15  # Number of characters to keep at the start
+            end_chars = max_length - start_chars - 3  # Remaining characters for the end
+            new_path = f"{path[:start_chars]}...{path[-end_chars:]}"
+            print(new_path)
+            return new_path
         return path
 
     def toggle_output_options(self):
@@ -159,7 +166,8 @@ class BlenderRenderApp:
 
     def update_ui(self, file_path):
         """ Updates the UI after a file is dropped """
-        self.file_label.config(text=os.path.basename(file_path), fg="green")
+        display_path = self.shorten_path(os.path.basename(file_path), max_length=50)
+        self.file_label.config(text=display_path, fg="green")
         self.root.update()  # Force UI refresh
         self.scene_var.set(f"✅ Scene")
         self.scene_label.config(fg="green")
@@ -201,8 +209,14 @@ class BlenderRenderApp:
             "-x", "1",
             "-s", str(start_frame),
             "-e", str(end_frame),
-            "-a"
         ]
+
+        # If override output path is enabled, add output path and filename
+        if self.override_output.get():
+            output_file = os.path.join(self.output_path.get(), self.render_filename.get())  # Construct full path
+            command.extend(["-o", output_file])  # Append output path
+
+        command.append("-a")  # Append animation render flag
 
         self.cancel_button.config(state="normal")
 
