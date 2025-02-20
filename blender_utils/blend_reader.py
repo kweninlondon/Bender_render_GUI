@@ -30,7 +30,12 @@ def get_blend_info(blend_file):
 
     if frame_range:
         start_frame, end_frame = map(int, frame_range.split("-"))
-        return {"start_frame": start_frame, "end_frame": end_frame, "output_path": output_path}
+        return {
+            "start_frame": start_frame,
+            "end_frame": end_frame,
+            "output_path": os.path.dirname(output_path),
+            "render_filename": os.path.basename(output_path)
+        }
     else:
         print("Error: Could not extract info.")
         return None

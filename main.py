@@ -6,14 +6,18 @@ from tkinterdnd2 import DND_FILES, TkinterDnD
 import threading
 import time
 import psutil
+import json
 from blender_utils.blend_reader import get_blend_info
 
 class BlenderRenderApp:
-    def __init__(self, root):
+    SETTINGS_FILE = "blend_settings.json"
+
+    def __init__(self, tk_root):
+        self.root = tk_root
         self.rendered_frame_count = None
         self.root = root
         self.root.title("Blender Render Launcher")
-        self.root.geometry("700x600")
+        self.root.geometry("700x800")
 
         print("Creating UI elements...")  # Debugging message
 
@@ -30,6 +34,10 @@ class BlenderRenderApp:
         self.scene_label = tk.Label(root, textvariable=self.scene_var, font=("Arial", 14, "bold"))
         self.scene_label.pack()
 
+        self.refresh_button = tk.Button(root, text="Fetch Scene Data", command=self.refresh_scene_settings)
+        self.refresh_button.config(state="disabled")
+        self.refresh_button.pack(pady=5)
+
         # Frame Range Inputs
         self.start_frame_var = IntVar(value=1)
         self.end_frame_var = IntVar(value=250)
@@ -38,12 +46,21 @@ class BlenderRenderApp:
         frame_range_frame.pack(pady=5)
 
         tk.Label(frame_range_frame, text="Start Frame:").grid(row=0, column=0, padx=5)
-        self.start_frame_entry = tk.Entry(frame_range_frame, textvariable=self.start_frame_var, width=5, font=("Arial", 12, "bold"))
+        self.start_frame_entry = tk.Entry(frame_range_frame, textvariable=self.start_frame_var, width=5,
+                                          font=("Arial", 12, "bold"), validate="key",
+                                          validatecommand=(self.root.register(self.validate_int), "%P"))
         self.start_frame_entry.grid(row=0, column=1, padx=5)
 
         tk.Label(frame_range_frame, text="End Frame:").grid(row=0, column=2, padx=5)
-        self.end_frame_entry = tk.Entry(frame_range_frame, textvariable=self.end_frame_var, width=5, font=("Arial", 12, "bold"))
+        self.end_frame_entry = tk.Entry(frame_range_frame, textvariable=self.end_frame_var, width=5,
+                                        font=("Arial", 12, "bold"), validate="key",
+                                        validatecommand=(self.root.register(self.validate_int), "%P"))
         self.end_frame_entry.grid(row=0, column=3, padx=5)
+
+        self.scene_frame_range_var = tk.BooleanVar(value = False)
+        self.frame_toggle = ToggleButton(frame_range_frame, on_toggle=self.update_user_settings)
+        self.frame_toggle.button.grid(row=0, column=4, padx=5)
+        self.frame_toggle.set_state("Default")
 
         # Define the IntVar before using it
         self.override_output = IntVar(value=0)
@@ -59,19 +76,31 @@ class BlenderRenderApp:
         file_name_frame = tk.Frame(root)
         file_name_frame.pack(pady=5)
 
-        tk.Label(file_name_frame, text="Render File Name:").grid(row=0, column=0, padx=5)
+        self.file_name_label = tk.Label(file_name_frame, text="Render File Name:")
+        self.file_name_label.grid(row=0, column=0, padx=5)
         self.filename_entry = tk.Entry(file_name_frame, textvariable=self.render_filename, width=50, font=("Arial", 12))
         self.filename_entry.grid(row=0, column=1, padx=5)
+        self.scene_filename_var = tk.BooleanVar(value = False)
+        self.filename_toggle = ToggleButton(file_name_frame, on_toggle=self.update_user_settings)
+        self.filename_toggle.set_state("Default")
+
+
+        output_path_frame = tk.Frame(root)
+        output_path_frame.pack(pady=5)
+
+        self.output_path_label = tk.Label(output_path_frame, text="Output Path:")
+        self.output_path_label.grid(row=0, column=0, padx=5)
 
         # Output Folder Selection
         self.output_path = StringVar(value=os.path.expanduser("~/Desktop"))
 
-        # tk.Button(root, text="Select Output Folder", command=self.select_output_folder).pack(pady=5)
+        self.output_label = tk.Label(output_path_frame, text=self.output_path.get(), font=("Arial", 12, "bold"))
+        self.output_label.grid(row=0, column=1, padx=5)
+        self.output_toggle = ToggleButton(output_path_frame, on_toggle=self.update_user_settings)
+        self.output_toggle.set_state("Default")
+
         self.select_output_button = tk.Button(root, text="Select Output Folder", command=self.select_output_folder)
         self.select_output_button.pack(pady=5)
-
-        self.output_label = tk.Label(root, textvariable=self.output_path, fg="black", font=("Arial", 12, "bold"))
-        self.output_label.pack()
 
         # Overall Progress Bar
         self.overall_progress = ttk.Progressbar(root, style="Custom.Horizontal.TProgressbar", orient="horizontal", length=400, mode="determinate")
@@ -123,30 +152,131 @@ class BlenderRenderApp:
         # self.first_detected_frame = None  # Initialize it to None
         self.rendering_active = False
 
+        self.start_frame_entry.bind("<Return>", self.release_focus)
+        self.end_frame_entry.bind("<Return>", self.release_focus)
+        self.filename_entry.bind("<Return>", self.release_focus)
+
+        self.start_frame_var.trace_add("write", lambda *args: self.update_user_settings())
+        self.end_frame_var.trace_add("write", lambda *args: self.update_user_settings())
+        self.render_filename.trace_add("write", lambda *args: self.update_user_settings())
+        self.output_path.trace_add("write", lambda *args: self.update_user_settings())
+        self.override_output.trace_add("write", lambda *args: self.update_user_settings())
+
         self.toggle_output_options()
         print("UI initialized successfully!")
 
+    def load_settings(self):
+        """Loads the settings JSON file."""
+        if os.path.exists(self.SETTINGS_FILE):
+            with open(self.SETTINGS_FILE, "r") as f:
+                return json.load(f)
+        return {}
+
+    def save_settings(self, settings):
+        """Saves settings to the JSON file safely."""
+        try:
+            with open(self.SETTINGS_FILE, "w", encoding="utf-8", newline="") as f:
+                json.dump(settings, f, indent=4)
+                f.flush()  # Ensure all data is written before closing
+        except Exception as e:
+            print(f"Error saving settings: {e}")
+
+    @staticmethod
+    def get_blend_last_modified(file_path):
+        """Returns the last modified timestamp of a .blend file."""
+        return os.path.getmtime(file_path) if os.path.exists(file_path) else None
 
     def drop_file(self, event):
         file_path = event.data.strip('{}')  # Handle macOS paths
         print(f"Dropped file path: {file_path}")
 
-        if file_path.endswith(".blend"):
-            self.blend_file_path = file_path
-
-            blend_directory = os.path.dirname(file_path)
-            self.output_path.set(blend_directory)
-
-            display_path = self.shorten_path(blend_directory, max_length=50)
-            self.file_label.config(text= display_path, fg="green")
-
-            self.root.after(10, lambda: self.update_ui(file_path))
-            blend_info = get_blend_info(file_path)
-            print(blend_info)
-        else:
+        if not file_path.endswith(".blend"):
             messagebox.showerror("Error", "Please drop a valid .blend file")
+            return
 
-    def shorten_path(self, path, max_length=50):
+        self.blend_file_path = file_path
+        settings = self.load_settings()
+        last_modified = self.get_blend_last_modified(file_path)
+        changed_emoji = "✅"  # Default value in case it’s used before assignment
+
+        # If the file was previously loaded, restore user settings
+        if file_path in settings:
+            prev_settings = settings[file_path]
+            user_settings = prev_settings.get("user_settings", {})
+
+            # check if the .blend file has changed since last time
+            file_changed = prev_settings["last_modified"] != last_modified
+            changed_emoji = "⚠️" if file_changed else "✅"
+            print(f"{changed_emoji} Blend file has changed: {file_changed}")
+
+            # First, check if user settings exist and apply them
+            if user_settings:
+                print("🔄 Loading user settings from JSON file...")
+                self.start_frame_var.set(user_settings["start_frame"])
+                self.end_frame_var.set(user_settings["end_frame"])
+                self.output_path.set(user_settings["output_path"])
+                self.render_filename.set(user_settings["render_filename"])
+                self.override_output.set(user_settings["override_output"])
+
+                toggle_states = user_settings.get("toggle_states", {})
+                self.frame_toggle.set_state(toggle_states.get("frame", "Default"))  # Default fallback
+                self.filename_toggle.set_state(toggle_states.get("filename", "Default"))
+                self.output_toggle.set_state(toggle_states.get("output", "Default"))
+
+                self.toggle_output_options()
+
+            elif "blend_info" in prev_settings:
+                print("ℹ️ No user settings found, loading from .blend file...")
+                self.start_frame_var.set(prev_settings["blend_info"]["start_frame"])
+                self.end_frame_var.set(prev_settings["blend_info"]["end_frame"])
+                self.output_path.set(prev_settings["blend_info"]["output_path"])
+                self.render_filename.set(prev_settings["blend_info"]["render_filename"])
+
+            else:
+                print(f"⚠️ Warning: No previous settings found for {file_path}. Using defaults.")
+                blend_info = get_blend_info(file_path)
+                if blend_info:
+                    self.start_frame_var.set(blend_info["start_frame"])
+                    self.end_frame_var.set(blend_info["end_frame"])
+                    self.output_path.set(os.path.dirname(blend_info["output_path"]))
+                    self.render_filename.set(os.path.basename(blend_info["output_path"]))
+                self.frame_toggle.set_state("Scene")
+                self.filename_toggle.set_state("Scene")
+                self.output_toggle.set_state("Scene")
+        else:
+            print("🆕 First time loading this .blend file, extracting info from Blender...")
+            blend_info = get_blend_info(file_path)
+            if blend_info:
+                self.start_frame_var.set(blend_info["start_frame"])
+                self.end_frame_var.set(blend_info["end_frame"])
+                self.output_path.set(os.path.dirname(blend_info["output_path"]))
+                self.render_filename.set(os.path.basename(blend_info["output_path"]))
+
+                # Save both file and user settings
+                settings[file_path] = {
+                    "blend_info": blend_info,
+                    "user_settings": {
+                        "start_frame": blend_info["start_frame"],
+                        "end_frame": blend_info["end_frame"],
+                        "output_path": os.path.dirname(blend_info["output_path"]),
+                        "render_filename": os.path.basename(blend_info["output_path"]),
+                        "override_output": False
+                    },
+                    "last_modified": last_modified
+                }
+                self.save_settings(settings)
+            self.frame_toggle.set_state("Scene")
+            self.filename_toggle.set_state("Scene")
+            self.output_toggle.set_state("Scene")
+
+        #  Update the UI label with an emoji if the file changed
+        display_path = self.shorten_path(file_path, max_length=50)
+        self.file_label.config(text=f"{display_path}", fg="green")
+        self.refresh_button.config(state="normal")
+        self.root.after(10, lambda: self.update_ui(file_path, changed_emoji))
+
+    @staticmethod
+    def shorten_path(path, max_length=50):
         """Shortens a long file path for UI display."""
         if len(path) > max_length:
             start_chars = 15  # Number of characters to keep at the start
@@ -156,23 +286,75 @@ class BlenderRenderApp:
             return new_path
         return path
 
+    def reset_frame_range(self):
+        """Resets the frame range to the values from the .blend file."""
+        if not self.blend_file_path:
+            messagebox.showerror("Error", "No .blend file loaded!")
+            return
+
+        blend_info = get_blend_info(self.blend_file_path)
+        if blend_info:
+            self.start_frame_var.set(blend_info["start_frame"])
+            self.end_frame_var.set(blend_info["end_frame"])
+
     def toggle_output_options(self):
         """Enable or disable output path and filename entry based on checkbox state."""
         if self.override_output.get():
             self.filename_entry.config(state="normal")  # Enable filename input
             self.output_label.config(state="normal")  # Enable output folder selection
             self.select_output_button.config(state="normal")  # Enable button
+            self.file_name_label.config(state="normal") # Enable Label
+            self.filename_toggle.button.config(state="normal")  # Enable toggle button
+            self.output_toggle.button.config(state="normal")  # Enable toggle button
+            self.output_path_label.config(state="normal")
+
         else:
             self.filename_entry.config(state="disabled")  # Disable filename input
             self.output_label.config(state="disabled")  # Disable output folder selection
             self.select_output_button.config(state="disabled")  # Disable button
+            self.file_name_label.config(state="disabled") # Enable Label
+            self.filename_toggle.button.config(state="disabled")  # Enable toggle button
+            self.output_toggle.button.config(state="disabled")  # Enable toggle button
+            self.output_path_label.config(state="disabled")
 
-    def update_ui(self, file_path):
+
+    def update_user_settings(self):
+        """Saves the user's modified settings to the JSON file."""
+        if not self.blend_file_path:
+            return
+
+        settings = self.load_settings()
+
+        if self.blend_file_path in settings:
+            settings[self.blend_file_path]["user_settings"] = {
+                "start_frame": self.start_frame_var.get() if self.start_frame_var.get() != "" else 1,  # Default to 1 if empty
+                "end_frame": self.end_frame_var.get() if self.end_frame_var.get() != "" else 1,  # Default to 1 if empty
+                "output_path": self.output_path.get(),
+                "render_filename": self.render_filename.get(),
+                "override_output": bool(self.override_output.get()),
+                # Save toggle button states
+                "toggle_states": {
+                    "frame": self.frame_toggle.states[self.frame_toggle.current_state][1],  # Scene, User, or Default
+                    "filename": self.filename_toggle.states[self.filename_toggle.current_state][1],
+                    "output": self.output_toggle.states[self.output_toggle.current_state][1]
+                }
+            }
+            self.save_settings(settings)
+            print(f"✅ Updated user settings for {self.blend_file_path}")
+
+    def update_ui(self, file_path, changed_emoji):
         """ Updates the UI after a file is dropped """
         display_path = self.shorten_path(os.path.basename(file_path), max_length=50)
-        self.file_label.config(text=display_path, fg="green")
+        label_text = f"{display_path}"
+        print(f"Updating label: {label_text}")  # Debugging output
+        short_path = self.shorten_path(self.output_path.get())
+        self.output_label.config(text=f"{short_path}")
+        self.file_label.config(text=label_text, fg="green")
+        self.root.update_idletasks()  # Force UI update
+
+
         self.root.update()  # Force UI refresh
-        self.scene_var.set(f"✅ Scene")
+        self.scene_var.set(f"{changed_emoji} Scene")
         self.scene_label.config(fg="green")
 
         self.root.update()  # Ensure labels refresh
@@ -369,6 +551,147 @@ class BlenderRenderApp:
         folder = filedialog.askdirectory(initialdir=initial_dir, title="Select Output Folder")
         if folder:
             self.output_path.set(folder)
+            short_path = self.shorten_path(folder)  # Shorten the path for display
+            self.output_label.config(text=short_path)  # Update the label text
+
+    def release_focus(self, event):
+        """Releases focus from the current widget only if it's an entry field."""
+        widget = self.root.focus_get()  # Get the currently focused widget
+        if isinstance(widget, tk.Entry):
+            widget.master.focus_set()  # Shift focus away only from Entry fields
+
+    def validate_int(self, value):
+        """Validate input: only allow positive integers, no empty values."""
+        if value.isdigit() or value == "":
+            return True
+        return False
+
+    def refresh_scene_settings(self):
+        """Refreshes the scene settings from the .blend file and updates JSON."""
+        if not self.blend_file_path:
+            return
+
+        print("🔄 Refreshing scene settings from Blender...")
+        blend_info = get_blend_info(self.blend_file_path)
+
+        if blend_info:
+            settings = self.load_settings()
+            settings[self.blend_file_path]["blend_info"] = blend_info
+            settings[self.blend_file_path]["last_modified"] = self.get_blend_last_modified(self.blend_file_path)
+
+            self.scene_var.set(f"✅ Scene")
+            self.save_settings(settings)
+            print("✅ Scene settings updated in JSON.")
+
+            # Refresh the UI to show new scene settings
+            self.apply_scene_settings()
+
+
+    def toggle_setting(self, setting):
+        """Toggles a setting between scene values and user values."""
+        if not self.blend_file_path:
+            return
+
+        settings = self.load_settings()
+        if self.blend_file_path in settings:
+            blend_info = settings[self.blend_file_path]["blend_info"]
+            user_settings = settings[self.blend_file_path]["user_settings"]
+
+            if setting == "frame":
+                is_using_scene = self.toggle_frame_button["text"] == "🎬 Scene"
+                if is_using_scene:
+                    # Switch to user settings
+                    self.start_frame_var.set(user_settings["start_frame"])
+                    self.end_frame_var.set(user_settings["end_frame"])
+                    self.toggle_frame_button.config(text="📝 Custom")
+                else:
+                    # Switch to scene settings
+                    self.start_frame_var.set(blend_info["start_frame"])
+                    self.end_frame_var.set(blend_info["end_frame"])
+                    self.toggle_frame_button.config(text="🎬 Scene")
+
+            # Save the toggle state
+            self.save_settings(settings)
+
+    def apply_scene_settings(self):
+        """Applies the scene settings to the UI (without affecting user settings)."""
+        if not self.blend_file_path:
+            return
+
+        settings = self.load_settings()
+        if self.blend_file_path in settings and "blend_info" in settings[self.blend_file_path]:
+            blend_info = settings[self.blend_file_path]["blend_info"]
+
+            self.start_frame_var.set(blend_info["start_frame"])
+            self.end_frame_var.set(blend_info["end_frame"])
+            self.output_path.set(blend_info["output_path"])
+            self.render_filename.set(blend_info["render_filename"])
+
+            print("🎬 Applied scene settings to the UI.")
+
+    def toggle_frame_range_data(self):
+        """Toggles the frame range setting from scene to user and allows deselection."""
+        if self.scene_frame_range_var.get():
+            self.scene_frame_range_var.set(False)  # Manually uncheck
+            self.frame_range_toggle_button.config(text="👥")
+        else:
+            self.scene_frame_range_var.set(True)  # Manually check
+            self.frame_range_toggle_button.config(text="🎬")
+
+    def toggle_filename_data(self):
+        """Toggles the frame range setting from scene to user and allows deselection."""
+        if self.scene_filename_var.get():
+            self.scene_filename_var.set(False)  # Manually uncheck
+            self.filename_toggle_button.config(text="👥")
+        else:
+            self.scene_filename_var.set(True)  # Manually check
+            self.filename_toggle_button.config(text="🎬")
+
+
+class ToggleButton:
+    def __init__(self, parent, on_toggle=None):
+        """
+        A reusable toggle button for switching between Scene, User, and Default settings.
+        For now, it only prints a message when toggled.
+
+        :param parent: The parent Tkinter frame.
+        """
+        self.states = [
+            ("🎬", "Scene"),
+            ("👥", "User"),
+            ("⚙️", "Default")
+        ]  # (Emoji, Full Name) # Scene, User, Default
+        self.current_state = 2  # Start at Scene
+        self.on_toggle = on_toggle  # Callback function
+
+        # Create button (only displays emoji)
+        self.button = tk.Button(parent, text=self.states[self.current_state][0], command=self.toggle)
+        self.button.grid(row=0, column=2, padx=5)
+
+    def toggle(self):
+        """Cycles through the 3 states and prints the full name with emoji."""
+        self.current_state = (self.current_state + 1) % 3  # 🎬 → 👥 → ⚙️ → 🎬
+
+        emoji, name = self.states[self.current_state]  # Extract new emoji + name
+        self.button.config(text=emoji)  # Update button text (emoji only)
+        print(f"Loading {emoji} {name} settings")  # Print full message
+        if self.on_toggle:
+            self.on_toggle()  # Trigger save when toggled
+
+    def set_state(self, state_name):
+        """
+        Sets the button state externally.
+
+        :param state_name: Must be "Scene", "User", or "Default".
+        """
+        state_map = {"Scene": 0, "User": 1, "Default": 2}
+        if state_name in state_map:
+            self.current_state = state_map[state_name]
+            emoji, _ = self.states[self.current_state]
+            self.button.config(text=emoji)  # Update button text
+            print(f"Button set to {emoji} {state_name} externally")
+        else:
+            print(f"⚠️ Invalid state: {state_name}. Must be 'Scene', 'User', or 'Default'.")
 
 if __name__ == "__main__":
     root = TkinterDnD.Tk()
