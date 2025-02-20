@@ -6,6 +6,7 @@ from tkinterdnd2 import DND_FILES, TkinterDnD
 import threading
 import time
 import psutil
+from blender_utils.blend_reader import get_blend_info
 
 class BlenderRenderApp:
     def __init__(self, root):
@@ -140,6 +141,8 @@ class BlenderRenderApp:
             self.file_label.config(text= display_path, fg="green")
 
             self.root.after(10, lambda: self.update_ui(file_path))
+            blend_info = get_blend_info(file_path)
+            print(blend_info)
         else:
             messagebox.showerror("Error", "Please drop a valid .blend file")
 
