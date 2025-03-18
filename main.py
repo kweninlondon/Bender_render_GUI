@@ -101,6 +101,10 @@ class BlenderRenderApp:
 
         self.select_output_button = tk.Button(root, text="Select Output Folder", command=self.select_output_folder)
         self.select_output_button.pack(pady=5)
+        # Progress Percentage Label (initially hidden)
+        self.progress_percentage_var = StringVar(value="")
+        self.progress_percentage_label = tk.Label(root, textvariable=self.progress_percentage_var, font=("Arial", 14, "bold"))
+        self.progress_percentage_label.pack(pady=5)
 
         # Overall Progress Bar
         self.overall_progress = ttk.Progressbar(root, style="Custom.Horizontal.TProgressbar", orient="horizontal", length=400, mode="determinate")
@@ -458,16 +462,29 @@ class BlenderRenderApp:
                         else:
                             avg_time_str = f"{avg_time:.2f}s"
                         estimated_left = avg_time * (end_frame - frame_number)
-                        estimated_left_str = time.strftime("%H:%M:%S", time.gmtime(estimated_left)) if self.frame_times else "--:--:--"
+                        total_seconds = int(estimated_left)
+                        days = total_seconds // 86400
+                        hours = (total_seconds % 86400) // 3600
+                        minutes = (total_seconds % 3600) // 60
+                        seconds = total_seconds % 60
+                        if days > 0:
+                            estimated_left_str = f"{days} days {hours} hours {minutes} minutes"
+                        else:
+                            estimated_left_str = f"{hours} hours {minutes} minutes {seconds} seconds"
 
+                        # Update progress percentage
+                        progress_percentage = int(((frame_number - start_frame + 1) / total_frames) * 100)
                         # Update UI
+                        relative_frame = frame_number - start_frame + 1
+                        absolute_frame_display = f" ({relative_frame:03d}/{total_frames:03d})" if start_frame > 1 else ""
                         self.root.after(10, lambda: [
-                            self.frame_progress_var.set(f"Frame Rendered: {frame_number}/{end_frame}"),
+                            self.frame_progress_var.set(f"Frame Rendered: {frame_number}/{end_frame}{absolute_frame_display}"),
                             self.elapsed_time_var.set(f"Elapsed Time: {elapsed_str}"),
                             self.current_frame_time_var.set(f"Current Frame Time: {frame_time:.2f}s"),
                             self.avg_time_per_frame_var.set(f"Avg Time per Frame: {avg_time_str}s"),
                             self.estimated_time_var.set(f"Estimated Time Left: {estimated_left_str} for {end_frame - frame_number} Frames"),
-                            self.overall_progress.config(value=frame_number - start_frame)
+                            self.overall_progress.config(value=frame_number - start_frame),
+                            self.progress_percentage_var.set(f"{progress_percentage}% Complete")
                         ])
                         self.rendered_frame_count += 1
 
@@ -481,9 +498,10 @@ class BlenderRenderApp:
                     self.frame_times.append(frame_time)
                 print(f"✅ Final Frame {rendering_frame} finished in {frame_time:.2f}s")
 
-            # When the render finishes, disable cancel button and unable render button
+            # When the render finishes, disable cancel button, reset render button, and clear progress percentage
             self.root.after(10, lambda: self.cancel_button.config(state="disabled"))
             self.root.after(10, lambda: self.render_button.config(state="normal", text="Render"))
+            self.root.after(10, lambda: self.progress_percentage_var.set(""))
 
         # Run the render process in a separate thread to prevent UI freezing
         threading.Thread(target=run_render, daemon=True).start()
@@ -547,6 +565,7 @@ class BlenderRenderApp:
                     self.frame_progress_var.set("Render Canceled")
 
                 self.render_button.config(state="normal", text="Render")
+                self.root.after(10, lambda: self.progress_percentage_var.set(""))
                 messagebox.showinfo("Render Canceled", "Rendering has been stopped.")
 
             except psutil.NoSuchProcess:
