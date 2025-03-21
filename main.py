@@ -473,7 +473,7 @@ class BlenderRenderApp:
                             estimated_left_str = f"{hours} hours {minutes} minutes {seconds} seconds"
 
                         # Update progress percentage
-                        progress_percentage = int(((frame_number - start_frame + 1) / total_frames) * 100)
+                        progress_percentage = int(((frame_number - start_frame) / total_frames) * 100)
                         # Update UI
                         relative_frame = frame_number - start_frame + 1
                         absolute_frame_display = f" ({relative_frame:03d}/{total_frames:03d})" if start_frame > 1 else ""
@@ -497,6 +497,25 @@ class BlenderRenderApp:
                 if frame_time > 0:
                     self.frame_times.append(frame_time)
                 print(f"✅ Final Frame {rendering_frame} finished in {frame_time:.2f}s")
+
+            # Stop the timer and update the final UI display
+            self.rendering_active = False  # Stop elapsed time updates
+
+            total_elapsed_time = int(time.time() - self.start_time)
+            total_elapsed_str = time.strftime("%H:%M:%S", time.gmtime(total_elapsed_time))
+
+            avg_time = sum(self.frame_times) / len(self.frame_times) if self.frame_times else 0
+            avg_time_str = f"{avg_time:.2f}s" if avg_time < 60 else time.strftime("%M:%S", time.gmtime(avg_time))
+
+            self.root.after(10, lambda: [
+                self.frame_progress_var.set(f"✅ All Frames Rendered: {self.rendered_frame_count}/{total_frames}"),
+                self.elapsed_time_var.set(f"Total Render Time: {total_elapsed_str}"),
+                self.avg_time_per_frame_var.set(f"Avg Time per Frame: {avg_time_str}"),
+                self.current_frame_time_var.set("Current Frame Time: --.--"),
+                self.estimated_time_var.set("Estimated Time Left: 00:00:00"),
+                self.progress_percentage_var.set("✅ 100% Complete"),
+                self.overall_progress.config(value=total_frames)
+            ])
 
             # When the render finishes, disable cancel button, reset render button, and clear progress percentage
             self.root.after(10, lambda: self.cancel_button.config(state="disabled"))
